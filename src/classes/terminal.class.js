@@ -4,11 +4,12 @@ class Terminal {
             if (!opts.parentId) throw "Missing options";
 
             // xterm and addons loaded as UMD <script> tags in ui.html (globals)
-            this.xTerm = window.Terminal;
-            const AttachAddon = window.AttachAddon;
-            const FitAddon = window.FitAddon;
-            const LigaturesAddon = window.LigaturesAddon;
-            const WebglAddon = window.WebglAddon;
+            // UMD bundles export module objects (e.g. { FitAddon: class }), not constructors directly
+            this.xTerm = window.XTerminal;
+            const AttachAddon = window.AttachAddon.AttachAddon;
+            const FitAddon = window.FitAddon.FitAddon;
+            const LigaturesAddon = window.LigaturesAddon.LigaturesAddon;
+            const WebglAddon = window.WebglAddon.WebglAddon;
             this.Ipc = window.electronAPI.ipc;
 
             this.port = opts.port || 3000;
