@@ -47,7 +47,11 @@ const { setupVoiceIPC, cleanupVoiceIPC } = require('./main/ipc/voiceHandlers');
 
 profiler.mark('modules-loaded');
 
+const allowedLogTypes = ['info', 'warn', 'error', 'debug', 'success', 'complete', 'pending', 'start', 'note'];
 ipc.on("log", (e, type, content) => {
+    if (!allowedLogTypes.includes(type)) {
+        type = 'info';
+    }
     signale[type](content);
 });
 
@@ -145,7 +149,11 @@ try {
     // Folder already exists
 }
 fs.readdirSync(innerThemesDir).forEach(e => {
-    fs.writeFileSync(path.join(themesDir, e), fs.readFileSync(path.join(innerThemesDir, e), { encoding: "utf-8" }));
+    let safeName = path.basename(e);
+    let srcPath = path.join(innerThemesDir, safeName);
+    let destPath = path.join(themesDir, safeName);
+    if (!destPath.startsWith(themesDir + path.sep)) return;
+    fs.writeFileSync(destPath, fs.readFileSync(srcPath, { encoding: "utf-8" }));
 });
 try {
     fs.mkdirSync(kblayoutsDir);
@@ -153,7 +161,11 @@ try {
     // Folder already exists
 }
 fs.readdirSync(innerKblayoutsDir).forEach(e => {
-    fs.writeFileSync(path.join(kblayoutsDir, e), fs.readFileSync(path.join(innerKblayoutsDir, e), { encoding: "utf-8" }));
+    let safeName = path.basename(e);
+    let srcPath = path.join(innerKblayoutsDir, safeName);
+    let destPath = path.join(kblayoutsDir, safeName);
+    if (!destPath.startsWith(kblayoutsDir + path.sep)) return;
+    fs.writeFileSync(destPath, fs.readFileSync(srcPath, { encoding: "utf-8" }));
 });
 try {
     fs.mkdirSync(fontsDir);
@@ -161,7 +173,11 @@ try {
     // Folder already exists
 }
 fs.readdirSync(innerFontsDir).forEach(e => {
-    fs.writeFileSync(path.join(fontsDir, e), fs.readFileSync(path.join(innerFontsDir, e)));
+    let safeName = path.basename(e);
+    let srcPath = path.join(innerFontsDir, safeName);
+    let destPath = path.join(fontsDir, safeName);
+    if (!destPath.startsWith(fontsDir + path.sep)) return;
+    fs.writeFileSync(destPath, fs.readFileSync(srcPath));
 });
 
 profiler.mark('asset-copy-end');
@@ -368,7 +384,7 @@ app.on('ready', async () => {
             signale.success(`New terminal back-end initialized at ${port}`);
             term.onclosed = (code, signal) => {
                 term.ondisconnected = () => { };
-                term.wss.close();
+                if (term.wss) term.wss.close();
                 signale.complete(`TTY exited at ${port}`, code, signal);
                 extraTtys[term.port] = null;
                 term = null;
@@ -380,7 +396,6 @@ app.on('ready', async () => {
             term.ondisconnected = () => {
                 term.onclosed = () => { };
                 term.close();
-                term.wss.close();
                 extraTtys[term.port] = null;
                 term = null;
             };

@@ -549,6 +549,14 @@ class Terminal {
             });
 
             this.close = () => {
+                if (this._tick) {
+                    clearInterval(this._tick);
+                    this._tick = null;
+                }
+                if (this.wss) {
+                    this.wss.close();
+                    this.wss = null;
+                }
                 this.tty.kill();
                 this._closed = true;
             };

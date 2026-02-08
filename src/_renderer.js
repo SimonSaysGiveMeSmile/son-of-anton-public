@@ -130,7 +130,12 @@ try {
         invoke: (channel, ...args) => ipc.invoke(channel, ...args),
         send: (channel, ...args) => ipc.send(channel, ...args),
         on: (channel, callback) => {
-            ipc.on(channel, (event, ...args) => callback(...args));
+            const wrapped = (event, ...args) => callback(...args);
+            ipc.on(channel, wrapped);
+            return wrapped;
+        },
+        removeListener: (channel, wrapped) => {
+            ipc.removeListener(channel, wrapped);
         },
     };
 
@@ -779,7 +784,7 @@ try {
 
         getDisplayName().then(user => {
             if (user) {
-                greeter.innerHTML += `Welcome back, <em>${user}</em>`;
+                greeter.innerHTML += `Welcome back, <em>${window._escapeHtml(user)}</em>`;
             } else {
                 greeter.innerHTML += "Welcome back";
             }
@@ -1154,14 +1159,14 @@ try {
             if (!th.endsWith(".json")) return;
             th = th.replace(".json", "");
             if (th === window.settings.theme) return;
-            themes += `<option>${th}</option>`;
+            themes += `<option>${window._escapeHtml(th)}</option>`;
         });
         for (let i = 0; i < remote.screen.getAllDisplays().length; i++) {
             if (i !== window.settings.monitor) monitors += `<option>${i}</option>`;
         }
         let nets = await window.si.networkInterfaces();
         nets.forEach(net => {
-            if (net.iface !== window.mods.netstat.iface) ifaces += `<option>${net.iface}</option>`;
+            if (net.iface !== window.mods.netstat.iface) ifaces += `<option>${window._escapeHtml(net.iface)}</option>`;
         });
 
         // Unlink the tactile keyboard from the terminal emulator to allow filling in the settings fields
@@ -1181,72 +1186,72 @@ try {
                     <tr>
                         <td>shell</td>
                         <td>The program to run as a terminal emulator</td>
-                        <td><input type="text" id="settingsEditor-shell" value="${window.settings.shell}"></td>
+                        <td><input type="text" id="settingsEditor-shell" value="${window._escapeHtml(window.settings.shell)}"></td>
                     </tr>
                     <tr>
                         <td>shellArgs</td>
                         <td>Arguments to pass to the shell</td>
-                        <td><input type="text" id="settingsEditor-shellArgs" value="${window.settings.shellArgs || ''}"></td>
+                        <td><input type="text" id="settingsEditor-shellArgs" value="${window._escapeHtml(window.settings.shellArgs || '')}"></td>
                     </tr>
                     <tr>
                         <td>cwd</td>
                         <td>Working Directory to start in</td>
-                        <td><input type="text" id="settingsEditor-cwd" value="${window.settings.cwd}"></td>
+                        <td><input type="text" id="settingsEditor-cwd" value="${window._escapeHtml(window.settings.cwd)}"></td>
                     </tr>
                     <tr>
                         <td>env</td>
                         <td>Custom shell environment override</td>
-                        <td><input type="text" id="settingsEditor-env" value="${window.settings.env}"></td>
+                        <td><input type="text" id="settingsEditor-env" value="${window._escapeHtml(String(window.settings.env))}"></td>
                     </tr>
                     <tr>
                         <td>username</td>
                         <td>Custom username to display at boot</td>
-                        <td><input type="text" id="settingsEditor-username" value="${window.settings.username}"></td>
+                        <td><input type="text" id="settingsEditor-username" value="${window._escapeHtml(window.settings.username || '')}"></td>
                     </tr>
 
                     <tr>
                         <td>theme</td>
                         <td>Name of the theme to load</td>
                         <td><select id="settingsEditor-theme">
-                            <option>${window.settings.theme}</option>
+                            <option>${window._escapeHtml(window.settings.theme)}</option>
                             ${themes}
                         </select></td>
                     </tr>
                     <tr>
                         <td>termFontSize</td>
                         <td>Size of the terminal text in pixels</td>
-                        <td><input type="number" id="settingsEditor-termFontSize" value="${window.settings.termFontSize}"></td>
+                        <td><input type="number" id="settingsEditor-termFontSize" value="${window._escapeHtml(String(window.settings.termFontSize))}"></td>
                     </tr>
                     <tr>
                         <td>audio</td>
                         <td>Activate audio sound effects</td>
                         <td><select id="settingsEditor-audio">
-                            <option>${window.settings.audio}</option>
-                            <option>${!window.settings.audio}</option>
+                            <option>${window._escapeHtml(String(window.settings.audio))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.audio))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>audioVolume</td>
                         <td>Set default volume for sound effects (0.0 - 1.0)</td>
-                        <td><input type="number" id="settingsEditor-audioVolume" value="${window.settings.audioVolume || '1.0'}"></td>
+                        <td><input type="number" id="settingsEditor-audioVolume" value="${window._escapeHtml(String(window.settings.audioVolume || '1.0'))}"></td>
                     </tr>
                     <tr>
                         <td>disableFeedbackAudio</td>
                         <td>Disable recurring feedback sound FX (input/output, mostly)</td>
                         <td><select id="settingsEditor-disableFeedbackAudio">
-                            <option>${window.settings.disableFeedbackAudio}</option>
-                            <option>${!window.settings.disableFeedbackAudio}</option>
+                            <option>${window._escapeHtml(String(window.settings.disableFeedbackAudio))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.disableFeedbackAudio))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>port</td>
                         <td>Local port to use for UI-shell connection</td>
-                        <td><input type="number" id="settingsEditor-port" value="${window.settings.port}"></td>
+                        <td><input type="number" id="settingsEditor-port" value="${window._escapeHtml(String(window.settings.port))}"></td>
                     </tr>
                     <tr>
                         <td>pingAddr</td>
                         <td>IPv4 address to test Internet connectivity</td>
-                        <td><input type="text" id="settingsEditor-pingAddr" value="${window.settings.pingAddr || "1.1.1.1"}"></td>
+                        <td><input type="text" id="settingsEditor-pingAddr" value="${window._escapeHtml(window.settings.pingAddr || "1.1.1.1")}"></td>
                     </tr>
                     <tr>
                         <td>clockHours</td>
@@ -1259,7 +1264,7 @@ try {
                         <td>monitor</td>
                         <td>Which monitor to spawn the UI in (defaults to primary display)</td>
                         <td><select id="settingsEditor-monitor">
-                            ${(typeof window.settings.monitor !== "undefined") ? "<option>" + window.settings.monitor + "</option>" : ""}
+                            ${(typeof window.settings.monitor !== "undefined") ? "<option>" + window._escapeHtml(String(window.settings.monitor)) + "</option>" : ""}
                             ${monitors}
                         </select></td>
                     </tr>
@@ -1267,23 +1272,23 @@ try {
                         <td>nointro</td>
                         <td>Skip the intro boot log and logo${(window.settings.nointroOverride) ? " (Currently overridden by CLI flag)" : ""}</td>
                         <td><select id="settingsEditor-nointro">
-                            <option>${window.settings.nointro}</option>
-                            <option>${!window.settings.nointro}</option>
+                            <option>${window._escapeHtml(String(window.settings.nointro))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.nointro))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>nocursor</td>
                         <td>Hide the mouse cursor${(window.settings.nocursorOverride) ? " (Currently overridden by CLI flag)" : ""}</td>
                         <td><select id="settingsEditor-nocursor">
-                            <option>${window.settings.nocursor}</option>
-                            <option>${!window.settings.nocursor}</option>
+                            <option>${window._escapeHtml(String(window.settings.nocursor))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.nocursor))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>iface</td>
                         <td>Override the interface used for network monitoring</td>
                         <td><select id="settingsEditor-iface">
-                            <option>${window.mods.netstat.iface}</option>
+                            <option>${window._escapeHtml(window.mods.netstat.iface)}</option>
                             ${ifaces}
                         </select></td>
                     </tr>
@@ -1291,8 +1296,8 @@ try {
                         <td>allowWindowed</td>
                         <td>Allow using F11 key to set the UI in windowed mode</td>
                         <td><select id="settingsEditor-allowWindowed">
-                            <option>${window.settings.allowWindowed}</option>
-                            <option>${!window.settings.allowWindowed}</option>
+                            <option>${window._escapeHtml(String(window.settings.allowWindowed))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.allowWindowed))}</option>
                         </select></td>
                     </tr>
                     <tr>
@@ -1307,52 +1312,52 @@ try {
                         <td>excludeThreadsFromToplist</td>
                         <td>Display threads in the top processes list</td>
                         <td><select id="settingsEditor-excludeThreadsFromToplist">
-                            <option>${window.settings.excludeThreadsFromToplist}</option>
-                            <option>${!window.settings.excludeThreadsFromToplist}</option>
+                            <option>${window._escapeHtml(String(window.settings.excludeThreadsFromToplist))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.excludeThreadsFromToplist))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>hideDotfiles</td>
                         <td>Hide files and directories starting with a dot in file display</td>
                         <td><select id="settingsEditor-hideDotfiles">
-                            <option>${window.settings.hideDotfiles}</option>
-                            <option>${!window.settings.hideDotfiles}</option>
+                            <option>${window._escapeHtml(String(window.settings.hideDotfiles))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.hideDotfiles))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>fsListView</td>
                         <td>Show files in a more detailed list instead of an icon grid</td>
                         <td><select id="settingsEditor-fsListView">
-                            <option>${window.settings.fsListView}</option>
-                            <option>${!window.settings.fsListView}</option>
+                            <option>${window._escapeHtml(String(window.settings.fsListView))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.fsListView))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>experimentalGlobeFeatures</td>
                         <td>Toggle experimental features for the network globe</td>
                         <td><select id="settingsEditor-experimentalGlobeFeatures">
-                            <option>${window.settings.experimentalGlobeFeatures}</option>
-                            <option>${!window.settings.experimentalGlobeFeatures}</option>
+                            <option>${window._escapeHtml(String(window.settings.experimentalGlobeFeatures))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.experimentalGlobeFeatures))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>experimentalFeatures</td>
                         <td>Toggle Chrome's experimental web features (DANGEROUS)</td>
                         <td><select id="settingsEditor-experimentalFeatures">
-                            <option>${window.settings.experimentalFeatures}</option>
-                            <option>${!window.settings.experimentalFeatures}</option>
+                            <option>${window._escapeHtml(String(window.settings.experimentalFeatures))}</option>
+                            <option>${window._escapeHtml(String(!window.settings.experimentalFeatures))}</option>
                         </select></td>
                     </tr>
                     <tr>
                         <td>contextWarningThreshold</td>
                         <td>Context usage percentage to trigger warning (0-100)</td>
-                        <td><input type="number" id="settingsEditor-contextWarningThreshold" value="${window.settings.contextWarningThreshold || 80}" min="0" max="100"></td>
+                        <td><input type="number" id="settingsEditor-contextWarningThreshold" value="${window._escapeHtml(String(window.settings.contextWarningThreshold || 80))}" min="0" max="100"></td>
                     </tr>
                 </table>
                 <h6 id="settingsEditorStatus">Loaded values from memory</h6>
                 <br>`,
             buttons: [
-                { label: "Open in External Editor", action: `electron.shell.openPath('${settingsFile}');electronWin.minimize();` },
+                { label: "Open in External Editor", action: `electron.shell.openPath(${JSON.stringify(settingsFile)});electronWin.minimize();` },
                 { label: "Save to Disk", action: "window.writeSettingsFile()" },
                 { label: "Reload UI", action: "window.location.reload(true);" },
                 { label: "Restart App", action: "remote.app.relaunch();remote.app.quit();" },
@@ -1472,7 +1477,7 @@ try {
 
             appList += `<tr>
                         <td>${(cut.enabled) ? 'YES' : 'NO'}</td>
-                        <td><input disabled type="text" maxlength=25 value="${cut.trigger}"></td>
+                        <td><input disabled type="text" maxlength=25 value="${window._escapeHtml(cut.trigger)}"></td>
                         <td>${shortcutsDefinition[action]}</td>
                     </tr>`;
         });
@@ -1481,9 +1486,9 @@ try {
         window.shortcuts.filter(e => e.type === "shell").forEach(cut => {
             customList += `<tr>
                             <td>${(cut.enabled) ? 'YES' : 'NO'}</td>
-                            <td><input disabled type="text" maxlength=25 value="${cut.trigger}"></td>
+                            <td><input disabled type="text" maxlength=25 value="${window._escapeHtml(cut.trigger)}"></td>
                             <td>
-                                <input disabled type="text" placeholder="Run terminal command..." value="${cut.action}">
+                                <input disabled type="text" placeholder="Run terminal command..." value="${window._escapeHtml(cut.action || '')}">
                                 <input disabled type="checkbox" name="shortcutsHelpNew_Enter" ${(cut.linebreak) ? 'checked' : ''}>
                                 <label for="shortcutsHelpNew_Enter">Enter</label>
                             </td>
@@ -1522,7 +1527,7 @@ try {
                 </details>
                 <br>`,
             buttons: [
-                { label: "Open Shortcuts File", action: `electron.shell.openPath('${shortcutsFile}');electronWin.minimize();` },
+                { label: "Open Shortcuts File", action: `electron.shell.openPath(${JSON.stringify(shortcutsFile)});electronWin.minimize();` },
                 { label: "Reload UI", action: "window.location.reload(true);" },
             ]
         }, () => {
