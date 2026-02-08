@@ -17,18 +17,23 @@
  *   profiler.logSummary();
  */
 
-const { performance, PerformanceObserver } = require('perf_hooks');
+// Use browser-native performance API (works in both Node.js and renderer)
+const _perf = (typeof window !== 'undefined') ? window.performance : require('perf_hooks').performance;
+const _PerfObserver = (typeof window !== 'undefined') ? window.PerformanceObserver : require('perf_hooks').PerformanceObserver;
+const performance = _perf;
+const PerformanceObserver = _PerfObserver;
 
-// Configuration
-const PROFILE_ENABLED = process.env.PROFILE_STARTUP === 'true' || process.env.PROFILE_STARTUP === 'deep';
-const PROFILE_DEEP = process.env.PROFILE_STARTUP === 'deep';
+// Configuration — in renderer, read from electronAPI; in main process, read from process.env
+const _env = (typeof window !== 'undefined' && window.electronAPI) ? window.electronAPI.process.env : process.env;
+const PROFILE_ENABLED = _env.PROFILE_STARTUP === 'true' || _env.PROFILE_STARTUP === 'deep';
+const PROFILE_DEEP = _env.PROFILE_STARTUP === 'deep';
 
 // Storage
 const marks = new Map();
 const measures = new Map();
 
 // Process detection
-const isMainProcess = process.type === 'browser';
+const isMainProcess = (typeof process !== 'undefined') && process.type === 'browser';
 
 // ContentTracing (main process only)
 let tracingActive = false;
@@ -192,11 +197,5 @@ async function stopTracing() {
     }
 }
 
-module.exports = {
-    mark,
-    measure,
-    getMetrics,
-    logSummary,
-    startTracing,
-    stopTracing
-};
+if (typeof window !== 'undefined') window.StartupProfiler = { mark, measure, getMetrics, logSummary, startTracing, stopTracing };
+if (typeof module !== 'undefined') module.exports = { mark, measure, getMetrics, logSummary, startTracing, stopTracing };

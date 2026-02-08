@@ -225,4 +225,5 @@ class WidgetLoader {
     }
 }
 
-module.exports = { WidgetLoader };
+if (typeof window !== 'undefined') window.WidgetLoader = WidgetLoader;
+if (typeof module !== 'undefined') module.exports = { WidgetLoader };

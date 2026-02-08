@@ -1,78 +1,57 @@
 class UpdateChecker {
     constructor() {
-        let https = require("https");
-        let electron = require("electron");
-        let remote = require("@electron/remote");
-        let current = remote.app.getVersion();
+        let current = window.electronAPI.app.getVersion();
 
         this._failed = false;
-        this._willfail = false;
         this._fail = e => {
             this._failed = true;
-            electron.ipcRenderer.send("log", "note", "UpdateChecker: Could not fetch latest release from GitHub's API.");
-            electron.ipcRenderer.send("log", "debug", `Error: ${e}`);
+            window.electronAPI.ipc.send("log", "note", "UpdateChecker: Could not fetch latest release from GitHub's API.");
+            window.electronAPI.ipc.send("log", "debug", `Error: ${e}`);
         };
 
-        https.get({
-            protocol: "https:",
-            host: "api.github.com",
-            path: "/repos/yifu001/son-of-anton/releases/latest",
+        fetch("https://api.github.com/repos/yifu001/son-of-anton/releases/latest", {
             headers: {
                 "User-Agent": "Son of Anton UpdateChecker"
             }
-        }, res => {
-            res.on('error', e => {
+        })
+            .then(res => {
+                if (res.status === 404) {
+                    this._fail("Got 404 (Not Found) response from server");
+                    return null;
+                }
+                if (!res.ok) {
+                    return res.text().then(text => {
+                        this._fail(text);
+                        return null;
+                    });
+                }
+                return res.json();
+            })
+            .then(release => {
+                if (this._failed || !release) return;
+
+                try {
+                    if (release.tag_name.slice(1) === current) {
+                        window.electronAPI.ipc.send("log", "info", "UpdateChecker: Running latest version.");
+                    } else if (Number(release.tag_name.slice(1).replace(/\./g, "")) < Number(current.replace("-pre", "").replace(/\./g, ""))) {
+                        window.electronAPI.ipc.send("log", "info", "UpdateChecker: Running an unreleased, development version.");
+                    } else {
+                        new Modal({
+                            type: "info",
+                            title: "New version available",
+                            message: `Son of Anton <strong>${release.tag_name}</strong> is now available.<br/>Head over to <a href="#" onclick="window.electronAPI.shell.openExternal('${release.html_url}')">github.com</a> to download the latest version.`
+                        });
+                        window.electronAPI.ipc.send("log", "info", `UpdateChecker: New version ${release.tag_name} available.`);
+                    }
+                } catch (e) {
+                    this._fail(e);
+                }
+            })
+            .catch(e => {
                 this._fail(e);
             });
-
-            switch (res.statusCode) {
-                case 200:
-                    break;
-                case 404:
-                    this._fail("Got 404 (Not Found) response from server");
-                    break;
-                default:
-                    this._willfail = true;
-            }
-
-            let rawData = "";
-
-            res.on('data', chunk => {
-                rawData += chunk;
-            });
-
-            res.on('end', () => {
-                let d = rawData;
-                if (this._failed === true) {
-                    // Do nothing, it already failed
-                } else if (this._willfail) {
-                    this._fail(d.toString());
-                } else {
-                    try {
-                        let release = JSON.parse(d.toString());
-                        if (release.tag_name.slice(1) === current) {
-                            electron.ipcRenderer.send("log", "info", "UpdateChecker: Running latest version.");
-                        } else if (Number(release.tag_name.slice(1).replace(/\./g, "")) < Number(current.replace("-pre", "").replace(/\./g, ""))) {
-                            electron.ipcRenderer.send("log", "info", "UpdateChecker: Running an unreleased, development version.");
-                        } else {
-                            new Modal({
-                                type: "info",
-                                title: "New version available",
-                                message: `Son of Anton <strong>${release.tag_name}</strong> is now available.<br/>Head over to <a href="#" onclick="require('electron').shell.openExternal('${release.html_url}')">github.com</a> to download the latest version.`
-                            });
-                            electron.ipcRenderer.send("log", "info", `UpdateChecker: New version ${release.tag_name} available.`);
-                        }
-                    } catch (e) {
-                        this._fail(e);
-                    }
-                }
-            });
-        }).on('error', e => {
-            this._fail(e);
-        });
     }
 }
 
-module.exports = {
-    UpdateChecker
-};
+if (typeof window !== 'undefined') window.UpdateChecker = UpdateChecker;
+if (typeof module !== 'undefined') module.exports = { UpdateChecker };

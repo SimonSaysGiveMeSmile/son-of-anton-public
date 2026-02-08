@@ -1,5 +1,5 @@
 // Disable eval()
-window.eval = global.eval = function () {
+window.eval = function () {
     throw new Error("eval() is disabled for security reasons.");
 };
 // Security helper :)
@@ -34,13 +34,13 @@ window.onerror = (msg, path, line, col, error) => {
     document.getElementById("boot_screen").innerHTML += `${error} :  ${msg}<br/>==> at ${path}  ${line}:${col}`;
 };
 
-const path = require("path");
-const fs = require("fs");
-const electron = require("electron");
-const remote = require("@electron/remote");
-const ipc = electron.ipcRenderer;
-const profiler = require("./performance/startupProfiler");
-const { WidgetLoader } = require("./classes/widgetLoader.class");
+// Preload bridge references (replaces require() calls)
+const fs = window.nodeAPI.fs;
+const path = window.nodeAPI.path;
+const os = window.nodeAPI.os;
+const __dirname = window.nodeAPI.dirname;
+const profiler = window.StartupProfiler;
+const { WidgetLoader } = window;
 const logFile = path.join(__dirname, '..', 'renderer_debug.log');
 const log = (msg) => {
     try {
@@ -48,14 +48,17 @@ const log = (msg) => {
     } catch (e) {
         // ignore
     }
-    ipc.send("log", "info", msg);
+    window.electronAPI.ipc.send("log", "info", msg);
 };
 
 log("[Renderer] Startup initiated - Direct Log");
+
+// Wrap in async IIFE because getPath() is now async
+(async () => {
 try {
     profiler.mark('renderer-start');
 
-    const settingsDir = remote.app.getPath("userData");
+    const settingsDir = await window.electronAPI.app.getPath("userData");
     log(`Settings dir: ${settingsDir}`);
     const themesDir = path.join(settingsDir, "themes");
     const keyboardsDir = path.join(settingsDir, "keyboards");
@@ -68,7 +71,7 @@ try {
     // Load config
     try {
         log("Loading settings...");
-        window.settings = require(settingsFile);
+        window.settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
         log("Settings loaded");
     } catch (e) {
         log(`Error loading settings: ${e.message}`);
@@ -76,7 +79,7 @@ try {
 
     try {
         log("Loading shortcuts...");
-        window.shortcuts = require(shortcutsFile);
+        window.shortcuts = JSON.parse(fs.readFileSync(shortcutsFile, 'utf-8'));
         log("Shortcuts loaded");
     } catch (e) {
         log(`Error loading shortcuts: ${e.message}`);
@@ -84,7 +87,7 @@ try {
 
     try {
         log("Loading window state...");
-        window.lastWindowState = require(lastWindowStateFile);
+        window.lastWindowState = JSON.parse(fs.readFileSync(lastWindowStateFile, 'utf-8'));
         log("Window state loaded");
     } catch (e) {
         log(`Error loading window state: ${e.message}`);
@@ -122,20 +125,19 @@ try {
     window.interimTranscription = null;
     window.activeTerminal = 0; // Track current terminal for voice integration
 
-    // Voice module imports (lazy loaded during initializeVoice)
+    // Voice module references (lazy loaded during initializeVoice from globals)
     let VoiceController, VoiceState, AudioFeedback, WaveformVisualizer, VoiceToggleWidget, InterimTranscription;
 
-    // IPC wrapper for voice (maps to electron.ipcRenderer)
+    // IPC wrapper for voice (maps to preload bridge)
     window.ipc = {
-        invoke: (channel, ...args) => ipc.invoke(channel, ...args),
-        send: (channel, ...args) => ipc.send(channel, ...args),
+        invoke: (channel, ...args) => window.electronAPI.ipc.invoke(channel, ...args),
+        send: (channel, ...args) => window.electronAPI.ipc.send(channel, ...args),
         on: (channel, callback) => {
-            const wrapped = (event, ...args) => callback(...args);
-            ipc.on(channel, wrapped);
-            return wrapped;
+            const handler = window.electronAPI.ipc.on(channel, callback);
+            return handler;
         },
-        removeListener: (channel, wrapped) => {
-            ipc.removeListener(channel, wrapped);
+        removeListener: (channel, handler) => {
+            window.electronAPI.ipc.removeListener(channel, handler);
         },
     };
 
@@ -176,39 +178,42 @@ try {
     };
 
     // Load CLI parameters
-    if (remote.process.argv.includes("--nointro")) {
+    if (window.electronAPI.process.argv.includes("--nointro")) {
         window.settings.nointroOverride = true;
     } else {
         window.settings.nointroOverride = false;
     }
-    if (remote.process.argv.includes("--nocursor")) {
+    if (window.electronAPI.process.argv.includes("--nocursor")) {
         window.settings.nocursorOverride = true;
     } else {
         window.settings.nocursorOverride = false;
     }
 
     // Retrieve theme override (hotswitch)
-    ipc.once("getThemeOverride", (e, theme) => {
+    // Use ipc.on + manual removal to simulate ipc.once
+    const _themeOverrideHandler = window.electronAPI.ipc.on("getThemeOverride", (theme) => {
+        window.electronAPI.ipc.removeListener("getThemeOverride", _themeOverrideHandler);
         if (theme !== null) {
             window.settings.theme = theme;
             window.settings.nointroOverride = true;
-            _loadTheme(require(path.join(themesDir, window.settings.theme + ".json")));
+            _loadTheme(JSON.parse(fs.readFileSync(path.join(themesDir, window.settings.theme + ".json"), 'utf-8')));
         } else {
-            _loadTheme(require(path.join(themesDir, window.settings.theme + ".json")));
+            _loadTheme(JSON.parse(fs.readFileSync(path.join(themesDir, window.settings.theme + ".json"), 'utf-8')));
         }
     });
-    ipc.send("getThemeOverride");
+    window.electronAPI.ipc.send("getThemeOverride");
     // Same for keyboard override/hotswitch
-    ipc.once("getKbOverride", (e, layout) => {
+    const _kbOverrideHandler = window.electronAPI.ipc.on("getKbOverride", (layout) => {
+        window.electronAPI.ipc.removeListener("getKbOverride", _kbOverrideHandler);
         if (layout !== null) {
             window.settings.keyboard = layout;
             window.settings.nointroOverride = true;
         }
     });
-    ipc.send("getKbOverride");
+    window.electronAPI.ipc.send("getKbOverride");
 
-    // Claude state updates from main process
-    ipc.on('claude-state-update', (event, state) => {
+    // Claude state updates from ClaudeStateManager (main process IPC)
+    window.electronAPI.ipc.on('claude-state-update', (state) => {
         window.claudeState = state;
 
         // Map each active terminal to a Claude session based on CWD
@@ -341,22 +346,15 @@ try {
             return NETWORK_ERROR_CODES.some(code => str.includes(code));
         };
 
-        // Catch Node.js EventEmitter errors (e.g. from third-party libs like geolite2-redist)
-        process.on('uncaughtException', (error) => {
-            if (error && isNetworkError(error.message || '', error.code || '')) {
-                console.warn('[Renderer] Network error (suppressed):', error.message);
-                ipc.send("log", "note", `Suppressed network error: ${error.message}`);
-                return;
-            }
-            // Non-network errors: let window.onerror handle via re-throw
-            throw error;
-        });
+        // Note: process.on('uncaughtException') removed - not available with contextIsolation.
+        // Network errors from Node.js EventEmitter (e.g. geolite2-redist) are now handled
+        // in the main process. window.onerror below catches renderer-side errors.
 
         window.onerror = (msg, path, line, col, error) => {
             // Suppress PANIC modals for transient network errors
             if (isNetworkError(msg || '', error || '')) {
                 console.warn('[Renderer] Network error (suppressed):', msg);
-                ipc.send("log", "note", `Suppressed network error: ${msg}`);
+                window.electronAPI.ipc.send("log", "note", `Suppressed network error: ${msg}`);
                 return true;  // Prevent default error handling
             }
 
@@ -367,8 +365,8 @@ try {
             });
             window.edexErrorsModals.push(errorModal);
 
-            ipc.send("log", "error", `${error}: ${msg}`);
-            ipc.send("log", "debug", `at ${path} ${line}:${col}`);
+            window.electronAPI.ipc.send("log", "error", `${error}: ${msg}`);
+            window.electronAPI.ipc.send("log", "debug", `at ${path} ${line}:${col}`);
         };
     }
 
@@ -402,8 +400,6 @@ try {
 
     // A proxy function used to add multithreading to systeminformation calls - see backend process manager @ _multithread.js
     function initSystemInformationProxy() {
-        const { nanoid } = require("nanoid/non-secure");
-
         window.si = new Proxy({}, {
             apply: () => { throw new Error("Cannot use sysinfo proxy directly as a function") },
             set: () => { throw new Error("Cannot set a property on the sysinfo proxy") },
@@ -412,23 +408,23 @@ try {
                     let callback = (typeof args[args.length - 1] === "function") ? true : false;
 
                     return new Promise((resolve, reject) => {
-                        let id = nanoid();
+                        let id = window.nodeAPI.nanoid();
                         let timeoutId = null;
 
-                        const handler = (e, res) => {
+                        const handler = window.electronAPI.ipc.on("systeminformation-reply-" + id, (res) => {
                             clearTimeout(timeoutId);
+                            window.electronAPI.ipc.removeListener("systeminformation-reply-" + id, handler);
                             if (callback) {
                                 args[args.length - 1](res);
                             }
                             resolve(res);
-                        };
+                        });
 
-                        ipc.once("systeminformation-reply-" + id, handler);
-                        ipc.send("systeminformation-call", prop, id, ...args);
+                        window.electronAPI.ipc.send("systeminformation-call", prop, id, ...args);
 
                         // 30 second timeout to prevent indefinite hangs
                         timeoutId = setTimeout(() => {
-                            ipc.removeListener("systeminformation-reply-" + id, handler);
+                            window.electronAPI.ipc.removeListener("systeminformation-reply-" + id, handler);
                             const error = new Error(`IPC timeout: systeminformation.${prop}() did not respond within 30s`);
                             if (window.settings && window.settings.debug) {
                                 console.error("[Renderer] " + error.message);
@@ -446,22 +442,13 @@ try {
         console.log('[Voice] Initializing voice system...');
 
         try {
-            // Lazy load voice modules
-            const voiceControllerModule = require('./classes/voiceController.class');
-            VoiceController = voiceControllerModule.VoiceController;
-            VoiceState = voiceControllerModule.VoiceState;
-
-            const audioFeedbackModule = require('./classes/audioFeedback.class');
-            AudioFeedback = audioFeedbackModule.AudioFeedback;
-
-            const waveformVisualizerModule = require('./classes/waveformVisualizer.class');
-            WaveformVisualizer = waveformVisualizerModule.WaveformVisualizer;
-
-            const voiceToggleWidgetModule = require('./classes/voiceToggleWidget.class');
-            VoiceToggleWidget = voiceToggleWidgetModule.VoiceToggleWidget;
-
-            const interimTranscriptionModule = require('./classes/interimTranscription.class');
-            InterimTranscription = interimTranscriptionModule.InterimTranscription;
+            // Voice modules loaded as globals via <script> tags in ui.html
+            VoiceController = window.VoiceController;
+            VoiceState = window.VoiceState;
+            AudioFeedback = window.AudioFeedback;
+            WaveformVisualizer = window.WaveformVisualizer;
+            VoiceToggleWidget = window.VoiceToggleWidget;
+            InterimTranscription = window.InterimTranscription;
 
             // Create audio feedback handler
             window.audioFeedback = new AudioFeedback();
@@ -580,7 +567,7 @@ try {
     window.audioManager = new AudioManager();
 
     // See #223
-    remote.app.focus();
+    window.electronAPI.app.focus();
 
     let i = 0;
     if (window.settings.nointro || window.settings.nointroOverride) {
@@ -602,12 +589,12 @@ try {
     function displayLine() {
         profiler.mark('boot-animation-start');
         let bootScreen = document.getElementById("boot_screen");
-        let log = fs.readFileSync(path.join(__dirname, "assets", "misc", "boot_log.txt")).toString().split('\n');
+        let log = fs.readFileSync(path.join(__dirname, "assets", "misc", "boot_log.txt"), 'utf-8').split('\n');
 
         function isArchUser() {
-            return require("os").platform() === "linux"
+            return os.platform() === "linux"
                 && fs.existsSync("/etc/os-release")
-                && fs.readFileSync("/etc/os-release").toString().includes("arch");
+                && fs.readFileSync("/etc/os-release", 'utf-8').includes("arch");
         }
 
         if (typeof log[i] === "undefined") {
@@ -625,7 +612,7 @@ try {
 
         switch (true) {
             case i === 2:
-                bootScreen.innerHTML += `Son of Anton Kernel version ${remote.app.getVersion()} boot at ${Date().toString()}; root:xnu-1699.22.73~1/RELEASE_X86_64`;
+                bootScreen.innerHTML += `Son of Anton Kernel version ${window.electronAPI.app.getVersion()} boot at ${Date().toString()}; root:xnu-1699.22.73~1/RELEASE_X86_64`;
             case i === 4:
                 setTimeout(displayLine, 500);
                 break;
@@ -718,7 +705,9 @@ try {
             return user;
 
         try {
-            user = await require("username")();
+            user = window.electronAPI.process.env.USERNAME
+                || window.electronAPI.process.env.USER
+                || os.homedir().split(path.sep).pop();
         } catch (e) {
             if (window.settings && window.settings.debug) {
                 console.warn("[Renderer] Username fetch failed:", e.message);
@@ -744,7 +733,7 @@ try {
         profiler.mark('ui-structure-created');
         profiler.measure('ui-structure', 'renderer-start', 'ui-structure-created');
         profiler.measure('renderer-init', 'renderer-start', 'ui-structure-created');
-        ipc.send("log", "info", "[Renderer] UI structure created");
+        window.electronAPI.ipc.send("log", "info", "[Renderer] UI structure created");
 
         await _delay(10);
 
@@ -856,17 +845,13 @@ try {
         window.onmouseup = e => {
             // if (window.keyboard.linkedToTerm) window.term[window.currentTerm].term.focus();
         };
-        window.term[0].term.writeln("\x1b[1m" + `Welcome to Son of Anton v${remote.app.getVersion()} - Electron v${process.versions.electron}` + "\x1b[0m");
+        window.term[0].term.writeln("\x1b[1m" + `Welcome to Son of Anton v${window.electronAPI.app.getVersion()} - Electron v${window.electronAPI.process.versions.electron}` + "\x1b[0m");
 
         // Force terminal refit by toggling DevTools open/close.
         // This triggers a window resize cycle that forces xterm to recalculate
         // row count, eliminating the gray body background bleed-through.
         setTimeout(() => {
-            let wc = remote.getCurrentWindow().webContents;
-            wc.openDevTools();
-            wc.once('devtools-opened', () => {
-                wc.closeDevTools();
-            });
+            window.electronAPI.ipc.invoke('toggle-devtools-refit');
         }, 500);
 
         // Initialize widget loader
@@ -874,8 +859,8 @@ try {
             profiler: profiler,
             staggerDelay: window.settings.widgetStaggerDelay || 100,
             onStartupComplete: (prof) => {
-                if (process.env.PROFILE_STARTUP === 'deep') {
-                    ipc.send('stop-content-tracing');
+                if (window.electronAPI.process.env.PROFILE_STARTUP === 'deep') {
+                    window.electronAPI.ipc.send('stop-content-tracing');
                 }
                 prof.logSummary();
             }
@@ -1043,11 +1028,11 @@ try {
         profiler.mark('renderer-ready');
         profiler.measure('renderer-total', 'renderer-start', 'renderer-ready');
         profiler.logSummary();
-        ipc.send('log', 'info', JSON.stringify(profiler.getMetrics()));
+        window.electronAPI.ipc.send('log', 'info', JSON.stringify(profiler.getMetrics()));
     }
 
     window.themeChanger = theme => {
-        ipc.send("setThemeOverride", theme);
+        window.electronAPI.ipc.send("setThemeOverride", theme);
         setTimeout(() => {
             window.location.reload(true);
         }, 100);
@@ -1064,7 +1049,7 @@ try {
             layout: path.join(keyboardsDir, layout + ".json" || settings.keyboard + ".json"),
             container: "keyboard"
         });
-        ipc.send("setKbOverride", layout);
+        window.electronAPI.ipc.send("setKbOverride", layout);
     };
 
     window.focusShellTab = number => {
@@ -1104,8 +1089,9 @@ try {
             window.term[number] = null;
 
             document.getElementById("shell_tab" + number).innerHTML = "<p>LOADING...</p>";
-            ipc.send("ttyspawn", "true");
-            ipc.once("ttyspawn-reply", (e, r) => {
+            window.electronAPI.ipc.send("ttyspawn", "true");
+            const _ttyHandler = window.electronAPI.ipc.on("ttyspawn-reply", (r) => {
+                window.electronAPI.ipc.removeListener("ttyspawn-reply", _ttyHandler);
                 if (r.startsWith("ERROR")) {
                     document.getElementById("shell_tab" + number).innerHTML = "<p>ERROR</p>";
                 } else if (r.startsWith("SUCCESS")) {
@@ -1161,7 +1147,8 @@ try {
             if (th === window.settings.theme) return;
             themes += `<option>${window._escapeHtml(th)}</option>`;
         });
-        for (let i = 0; i < remote.screen.getAllDisplays().length; i++) {
+        const displays = await window.electronAPI.screen.getAllDisplays();
+        for (let i = 0; i < displays.length; i++) {
             if (i !== window.settings.monitor) monitors += `<option>${i}</option>`;
         }
         let nets = await window.si.networkInterfaces();
@@ -1176,7 +1163,7 @@ try {
 
         new Modal({
             type: "custom",
-            title: `Settings <i>(v${remote.app.getVersion()})</i>`,
+            title: `Settings <i>(v${window.electronAPI.app.getVersion()})</i>`,
             html: `<table id="settingsEditor">
                     <tr>
                         <th>Key</th>
@@ -1357,11 +1344,11 @@ try {
                 <h6 id="settingsEditorStatus">Loaded values from memory</h6>
                 <br>`,
             buttons: [
-                { label: "Open in External Editor", action: `electron.shell.openPath(${JSON.stringify(settingsFile)});electronWin.minimize();` },
+                { label: "Open in External Editor", action: `window.electronAPI.shell.openExternal('file:///' + ${JSON.stringify(settingsFile.replace(/\\/g, '/'))});window.electronAPI.window.minimize();` },
                 { label: "Save to Disk", action: "window.writeSettingsFile()" },
                 { label: "Reload UI", action: "window.location.reload(true);" },
-                { label: "Restart App", action: "remote.app.relaunch();remote.app.quit();" },
-                { label: "Quit", action: "remote.app.quit();" }
+                { label: "Restart App", action: "window.electronAPI.app.relaunch();window.electronAPI.app.quit();" },
+                { label: "Quit", action: "window.electronAPI.app.quit();" }
             ]
         }, () => {
             // Link the keyboard back to the terminal
@@ -1375,16 +1362,15 @@ try {
     };
 
     window.writeFile = (filePath) => {
-        fs.writeFile(filePath, document.getElementById("fileEdit").value, "utf-8", (err) => {
-            if (err) {
-                document.getElementById("fedit-status").innerHTML = `<i style="color: var(--color_red);">Save failed: ${window._escapeHtml(err.message)}</i>`;
-                if (window.settings && window.settings.debug) {
-                    console.error("[Renderer] File write failed:", filePath, err.message);
-                }
-                return;
-            }
+        try {
+            fs.writeFileSync(filePath, document.getElementById("fileEdit").value, "utf-8");
             document.getElementById("fedit-status").innerHTML = "<i>File saved.</i>";
-        });
+        } catch (err) {
+            document.getElementById("fedit-status").innerHTML = `<i style="color: var(--color_red);">Save failed: ${window._escapeHtml(err.message)}</i>`;
+            if (window.settings && window.settings.debug) {
+                console.error("[Renderer] File write failed:", filePath, err.message);
+            }
+        }
     };
 
     window.writeSettingsFile = () => {
@@ -1435,9 +1421,8 @@ try {
         }
     };
 
-    window.toggleFullScreen = () => {
-        let useFullscreen = (electronWin.isFullScreen() ? false : true);
-        electronWin.setFullScreen(useFullscreen);
+    window.toggleFullScreen = async () => {
+        let useFullscreen = await window.electronAPI.ipc.invoke('window-toggle-fullscreen');
 
         //Update settings
         window.lastWindowState["useFullscreen"] = useFullscreen;
@@ -1500,7 +1485,7 @@ try {
         }
         new Modal({
             type: "custom",
-            title: `Available Keyboard Shortcuts <i>(v${remote.app.getVersion()})</i>`,
+            title: `Available Keyboard Shortcuts <i>(v${window.electronAPI.app.getVersion()})</i>`,
             html: `<h5>Using either the on-screen or a physical keyboard, you can use the following shortcuts:</h5>
                 <details open id="shortcutsHelpAccordeon1">
                     <summary>Emulator shortcuts</summary>
@@ -1527,7 +1512,7 @@ try {
                 </details>
                 <br>`,
             buttons: [
-                { label: "Open Shortcuts File", action: `electron.shell.openPath(${JSON.stringify(shortcutsFile)});electronWin.minimize();` },
+                { label: "Open Shortcuts File", action: `window.electronAPI.shell.openExternal('file:///' + ${JSON.stringify(shortcutsFile.replace(/\\/g, '/'))});window.electronAPI.window.minimize();` },
                 { label: "Reload UI", action: "window.location.reload(true);" },
             ]
         }, () => {
@@ -1628,7 +1613,7 @@ try {
                 }
                 return true;
             case "DEV_DEBUG":
-                remote.getCurrentWindow().webContents.toggleDevTools();
+                window.electronAPI.window.toggleDevTools();
                 return true;
             case "DEV_RELOAD":
                 window.location.reload(true);
@@ -1639,11 +1624,23 @@ try {
         }
     };
 
-    // Global keyboard shortcuts
-    const globalShortcut = remote.globalShortcut;
-    globalShortcut.unregisterAll();
+    // Global keyboard shortcuts (new pattern: register accelerator + channel, listen for triggered)
+    window.electronAPI.globalShortcut.unregisterAll();
+
+    // Track registered shortcut channels for the onTriggered handler
+    const _shortcutChannelMap = {};
+
+    window.electronAPI.globalShortcut.onTriggered((channel) => {
+        const handler = _shortcutChannelMap[channel];
+        if (handler) {
+            handler();
+        }
+    });
 
     window.registerKeyboardShortcuts = () => {
+        // Clear previous mappings
+        Object.keys(_shortcutChannelMap).forEach(k => delete _shortcutChannelMap[k]);
+
         window.shortcuts.forEach(cut => {
             if (!cut.enabled) return;
 
@@ -1651,19 +1648,24 @@ try {
                 if (cut.action === "TAB_X") {
                     for (let i = 1; i <= 5; i++) {
                         let trigger = cut.trigger.replace("X", i);
-                        let dfn = () => { window.useAppShortcut(`TAB_${i}`) };
-                        globalShortcut.register(trigger, dfn);
+                        let channel = `shortcut-tab-${i}`;
+                        _shortcutChannelMap[channel] = () => { window.useAppShortcut(`TAB_${i}`) };
+                        window.electronAPI.globalShortcut.register(trigger, channel);
                     }
                 } else {
-                    globalShortcut.register(cut.trigger, () => {
+                    let channel = `shortcut-app-${cut.action}`;
+                    _shortcutChannelMap[channel] = () => {
                         window.useAppShortcut(cut.action);
-                    });
+                    };
+                    window.electronAPI.globalShortcut.register(cut.trigger, channel);
                 }
             } else if (cut.type === "shell") {
-                globalShortcut.register(cut.trigger, () => {
+                let channel = `shortcut-shell-${cut.trigger}`;
+                _shortcutChannelMap[channel] = () => {
                     let fn = (cut.linebreak) ? "writelr" : "write";
                     window.term[window.currentTerm][fn](cut.action);
-                });
+                };
+                window.electronAPI.globalShortcut.register(cut.trigger, channel);
             } else {
                 console.warn(`${cut.trigger} has unknown type`);
             }
@@ -1677,7 +1679,7 @@ try {
     });
 
     window.addEventListener("blur", () => {
-        globalShortcut.unregisterAll();
+        window.electronAPI.globalShortcut.unregisterAll();
     });
 
     // Prevent showing menu, exiting fullscreen or app with keyboard shortcuts
@@ -1701,17 +1703,17 @@ try {
 
     // Fix #265
     window.addEventListener("keyup", e => {
-        if (require("os").platform() === "win32" && e.key === "F4" && e.altKey === true) {
-            remote.app.quit();
+        if (os.platform() === "win32" && e.key === "F4" && e.altKey === true) {
+            window.electronAPI.app.quit();
         }
         // Add Cmd+Q for macOS
-        if (require("os").platform() === "darwin" && e.key === "q" && e.metaKey === true) {
-            remote.app.quit();
+        if (os.platform() === "darwin" && e.key === "q" && e.metaKey === true) {
+            window.electronAPI.app.quit();
         }
     });
 
     // Fix double-tap zoom on touchscreens
-    electron.webFrame.setVisualZoomLevelLimits(1, 1);
+    window.electronAPI.ipc.invoke('set-zoom-limits', 1, 1);
 
     // Resize terminal with window
     window.onresize = () => {
@@ -1722,38 +1724,38 @@ try {
         }
     };
 
-    // See #413
+    // See #413 — window resize geometry enforcement via IPC
     window.resizeTimeout = null;
-    let electronWin = remote.getCurrentWindow();
-    electronWin.on("resize", () => {
+    window.electronAPI.ipc.on('window-resize', () => {
         if (settings.keepGeometry === false) return;
         clearTimeout(window.resizeTimeout);
-        window.resizeTimeout = setTimeout(() => {
-            let win = remote.getCurrentWindow();
-            if (win.isFullScreen()) return false;
-            if (win.isMaximized()) {
-                win.unmaximize();
-                win.setFullScreen(true);
-                return false;
+        window.resizeTimeout = setTimeout(async () => {
+            const winState = await window.electronAPI.ipc.invoke('window-get-state');
+            if (winState.isFullScreen) return;
+            if (winState.isMaximized) {
+                await window.electronAPI.ipc.invoke('window-unmaximize');
+                await window.electronAPI.ipc.invoke('window-set-fullscreen', true);
+                return;
             }
 
-            let size = win.getSize();
+            let size = winState.size; // [width, height]
 
             if (size[0] >= size[1]) {
-                win.setSize(size[0], parseInt(size[0] * 9 / 16));
+                window.electronAPI.window.setSize(size[0], parseInt(size[0] * 9 / 16));
             } else {
-                win.setSize(size[1], parseInt(size[1] * 9 / 16));
+                window.electronAPI.window.setSize(size[1], parseInt(size[1] * 9 / 16));
             }
         }, 100);
     });
 
-    electronWin.on("leave-full-screen", () => {
-        remote.getCurrentWindow().setSize(960, 540);
+    window.electronAPI.ipc.on('window-leave-full-screen', () => {
+        window.electronAPI.window.setSize(960, 540);
     });
 
 } catch (e) {
-    const fs = require('fs');
-    const path = require('path');
-    const logFile = path.join(__dirname, '..', 'renderer_debug.log');
-    try { fs.appendFileSync(logFile, `[FATAL] ${e.message}\n${e.stack}\n`); } catch (err) { }
+    const _fs = window.nodeAPI.fs;
+    const _path = window.nodeAPI.path;
+    const _logFile = _path.join(window.nodeAPI.dirname, '..', 'renderer_debug.log');
+    try { _fs.appendFileSync(_logFile, `[FATAL] ${e.message}\n${e.stack}\n`); } catch (err) { }
 }
+})();

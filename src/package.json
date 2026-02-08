@@ -23,7 +23,6 @@
   },
   "homepage": "https://github.com/yifu001/son-of-anton#readme",
   "dependencies": {
-    "@electron/remote": "^2.1.2",
     "@picovoice/porcupine-node": "^4.0.1",
     "augmented-ui": "^1.1.2",
     "chokidar": "^3.5.3",

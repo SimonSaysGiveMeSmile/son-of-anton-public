@@ -49,6 +49,5 @@ class Clock {
     }
 }
 
-module.exports = {
-    Clock
-};
+if (typeof window !== 'undefined') window.Clock = Clock;
+if (typeof module !== 'undefined') module.exports = { Clock };

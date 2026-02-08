@@ -34,8 +34,6 @@ if (!gotLock) {
 }
 
 const electron = require("electron");
-const remoteMain = require('@electron/remote/main');
-remoteMain.initialize();
 const ipc = electron.ipcMain;
 const path = require("path");
 const url = require("url");
@@ -223,19 +221,19 @@ function createWindow(settings) {
         backgroundColor: '#000000',
         webPreferences: {
             devTools: true,
-            enableRemoteModule: true,
-            contextIsolation: false,
+            contextIsolation: true,
+            nodeIntegration: false,
+            preload: path.join(__dirname, 'preload.js'),
             backgroundThrottling: false,
             webSecurity: true,
-            nodeIntegration: true,
             nodeIntegrationInSubFrames: false,
             allowRunningInsecureContent: false,
             experimentalFeatures: settings.experimentalFeatures || false
         }
     });
 
-    // Enable @electron/remote for this window
-    remoteMain.enable(win.webContents);
+    // Wire IPC handlers for context-isolation bridge
+    require('./ipcHandlers')(win);
 
     win.loadURL(url.format({
         pathname: path.join(__dirname, 'ui.html'),

@@ -1,7 +1,8 @@
 class AudioManager {
     constructor() {
-        const path = require("path");
-        const {Howl, Howler} = require("howler");
+        const path = window.nodeAPI.path;
+        const __dirname = window.nodeAPI.dirname;
+        // Howl and Howler are globals from <script> tag
 
         if (window.settings.audio === true) {
             if(window.settings.disableFeedbackAudio === false) {
@@ -68,6 +69,5 @@ class AudioManager {
     }
 }
 
-module.exports = {
-    AudioManager
-};
+if (typeof window !== 'undefined') window.AudioManager = AudioManager;
+if (typeof module !== 'undefined') module.exports = { AudioManager };

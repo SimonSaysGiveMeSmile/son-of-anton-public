@@ -136,6 +136,5 @@ class FuzzyFinder {
      }
 }
 
-module.exports = {
-    FuzzyFinder
-};
+if (typeof window !== 'undefined') window.FuzzyFinder = FuzzyFinder;
+if (typeof module !== 'undefined') module.exports = { FuzzyFinder };

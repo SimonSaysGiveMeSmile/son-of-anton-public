@@ -8,7 +8,8 @@
  * - Wake word ignored during recording (re-triggering disabled)
  */
 
-const { AudioCapture } = require('./audioCapture.class');
+// AudioCapture is loaded via <script> tag in ui.html
+const AudioCapture = window.AudioCapture;
 
 // Voice states
 const VoiceState = {
@@ -441,4 +442,8 @@ class VoiceController {
   }
 }
 
-module.exports = { VoiceController, VoiceState };
+if (typeof window !== 'undefined') {
+    window.VoiceController = VoiceController;
+    window.VoiceState = VoiceState;
+}
+if (typeof module !== 'undefined') module.exports = { VoiceController, VoiceState };

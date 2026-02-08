@@ -271,4 +271,5 @@ class ContextWidget {
     }
 }
 
-module.exports = { ContextWidget };
+if (typeof window !== 'undefined') window.ContextWidget = ContextWidget;
+if (typeof module !== 'undefined') module.exports = { ContextWidget };

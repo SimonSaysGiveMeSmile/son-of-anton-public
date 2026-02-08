@@ -157,4 +157,5 @@ class WaveformVisualizer {
   }
 }
 
-module.exports = { WaveformVisualizer };
+if (typeof window !== 'undefined') window.WaveformVisualizer = WaveformVisualizer;
+if (typeof module !== 'undefined') module.exports = { WaveformVisualizer };

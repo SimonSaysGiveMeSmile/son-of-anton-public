@@ -276,4 +276,4 @@ class AgentList {
 }
 
 
-// window.AgentList = AgentList;
+if (typeof window !== 'undefined') window.AgentList = AgentList;

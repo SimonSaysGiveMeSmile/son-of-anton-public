@@ -3,6 +3,7 @@ const config = {
     testEnvironment: 'jsdom',
     testMatch: ['**/tests/**/*.test.js'],
     moduleFileExtensions: ['js', 'json'],
+    moduleDirectories: ['node_modules', 'src/node_modules'],
     // Avoid haste map collision between root and src package.json
     modulePathIgnorePatterns: ['<rootDir>/src/package.json', '<rootDir>/prebuild-src/'],
     testPathIgnorePatterns: ['/node_modules/', '/src/node_modules/'],

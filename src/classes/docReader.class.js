@@ -92,6 +92,5 @@ class DocReader {
     }
 }
 
-module.exports = {
-    DocReader
-};
+if (typeof window !== 'undefined') window.DocReader = DocReader;
+if (typeof module !== 'undefined') module.exports = { DocReader };

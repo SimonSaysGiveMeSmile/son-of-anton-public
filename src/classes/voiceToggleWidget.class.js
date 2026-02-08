@@ -119,4 +119,5 @@ class VoiceToggleWidget {
   }
 }
 
-module.exports = { VoiceToggleWidget };
+if (typeof window !== 'undefined') window.VoiceToggleWidget = VoiceToggleWidget;
+if (typeof module !== 'undefined') module.exports = { VoiceToggleWidget };

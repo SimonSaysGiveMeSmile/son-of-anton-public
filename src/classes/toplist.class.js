@@ -247,6 +247,5 @@ class Toplist {
     }
 }
 
-module.exports = {
-    Toplist
-};
+if (typeof window !== 'undefined') window.Toplist = Toplist;
+if (typeof module !== 'undefined') module.exports = { Toplist };

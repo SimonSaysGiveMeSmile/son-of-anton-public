@@ -89,6 +89,5 @@ class RAMwatcher {
     }
 }
 
-module.exports = {
-    RAMwatcher
-};
+if (typeof window !== 'undefined') window.RAMwatcher = RAMwatcher;
+if (typeof module !== 'undefined') module.exports = { RAMwatcher };

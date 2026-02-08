@@ -4,10 +4,15 @@
  * Watches ~/.claude.json and ~/.claude/todos/ for changes and sends
  * updates to the renderer process via IPC.
  */
-const chokidar = require('chokidar');
+let chokidar = null;
+try {
+    chokidar = require('chokidar');
+} catch (e) {
+    console.warn('[ClaudeState] File watching disabled: chokidar not available');
+}
 const path = require('path');
-const os = require('os');
 const fs = require('fs');
+const os = require('os');
 
 class ClaudeStateManager {
     /**
@@ -15,11 +20,8 @@ class ClaudeStateManager {
      */
     constructor(mainWindow) {
         this.mainWindow = mainWindow;
-        this.claudeDir = path.join(os.homedir(), '.claude');
-        this.claudeJsonPath = path.join(os.homedir(), '.claude.json');
-        this.todosDir = path.join(this.claudeDir, 'todos');
-        this.tasksDir = path.join(this.claudeDir, 'tasks');  // Main session tasks directory
-        this.liveContextPath = path.join(this.claudeDir, 'cache', 'context-live.json');
+        this._initialized = false;
+        this._watcherAvailable = !!chokidar;
         this.watchers = [];
         this.state = {
             projects: {},
@@ -29,90 +31,118 @@ class ClaudeStateManager {
             agents: [],  // Subagent data from ~/.claude/projects/*/subagents/
             lastUpdate: null
         };
-        this.projectsDir = path.join(this.claudeDir, 'projects');
         this._updateTimeout = null;
         this._pollInterval = null;
         this._subagentPollInterval = null;
         this._tasksPollInterval = null;
-        this._lastLiveContextMtime = 0;
+        this._lastLiveContextContent = null;
+
+        // Paths are set in _init() after async homedir resolution
+        this.claudeDir = null;
+        this.claudeJsonPath = null;
+        this.todosDir = null;
+        this.tasksDir = null;
+        this.liveContextPath = null;
+        this.projectsDir = null;
+    }
+
+    /**
+     * Initialize paths (runs in main process, synchronous)
+     */
+    _init() {
+        if (this._initialized) return;
+        const homedir = os.homedir();
+        this.claudeDir = path.join(homedir, '.claude');
+        this.claudeJsonPath = path.join(homedir, '.claude.json');
+        this.todosDir = path.join(this.claudeDir, 'todos');
+        this.tasksDir = path.join(this.claudeDir, 'tasks');
+        this.liveContextPath = path.join(this.claudeDir, 'cache', 'context-live.json');
+        this.projectsDir = path.join(this.claudeDir, 'projects');
+        this._initialized = true;
     }
 
     /**
      * Start file watchers for Claude state files
      */
     start() {
-        const watcherOptions = {
-            persistent: true,
-            ignoreInitial: false,
-            awaitWriteFinish: {
-                stabilityThreshold: 500,
-                pollInterval: 100
-            },
-            ignorePermissionErrors: true
-        };
+        this._init();
 
-        // Watch main ~/.claude.json file
-        const mainWatcher = chokidar.watch(this.claudeJsonPath, watcherOptions);
-        mainWatcher.on('add', (filepath) => this._handleMainStateChange(filepath));
-        mainWatcher.on('change', (filepath) => this._handleMainStateChange(filepath));
-        mainWatcher.on('error', (error) => this._handleError('main', error));
-        this.watchers.push(mainWatcher);
+        if (this._watcherAvailable) {
+            const watcherOptions = {
+                persistent: true,
+                ignoreInitial: false,
+                awaitWriteFinish: {
+                    stabilityThreshold: 500,
+                    pollInterval: 100
+                },
+                ignorePermissionErrors: true
+            };
 
-        // Watch ~/.claude/todos/ directory
-        const todosWatcherOptions = {
-            ...watcherOptions,
-            depth: 0 // Only watch immediate children
-        };
-        const todosWatcher = chokidar.watch(this.todosDir, todosWatcherOptions);
-        todosWatcher.on('add', (filepath) => this._handleTodoChange(filepath));
-        todosWatcher.on('change', (filepath) => this._handleTodoChange(filepath));
-        todosWatcher.on('unlink', (filepath) => this._handleTodoRemove(filepath));
-        todosWatcher.on('error', (error) => this._handleError('todos', error));
-        this.watchers.push(todosWatcher);
+            // Watch main ~/.claude.json file
+            const mainWatcher = chokidar.watch(this.claudeJsonPath, watcherOptions);
+            mainWatcher.on('add', (filepath) => this._handleMainStateChange(filepath));
+            mainWatcher.on('change', (filepath) => this._handleMainStateChange(filepath));
+            mainWatcher.on('error', (error) => this._handleError('main', error));
+            this.watchers.push(mainWatcher);
 
-        // Watch ~/.claude/cache/context-live.json for real-time context data
-        const liveContextWatcherOptions = {
-            ...watcherOptions,
-            awaitWriteFinish: {
-                stabilityThreshold: 100,  // Faster updates for live data
-                pollInterval: 50
-            }
-        };
-        const liveContextWatcher = chokidar.watch(this.liveContextPath, liveContextWatcherOptions);
-        liveContextWatcher.on('add', (filepath) => this._handleLiveContextChange(filepath));
-        liveContextWatcher.on('change', (filepath) => this._handleLiveContextChange(filepath));
-        liveContextWatcher.on('error', (error) => this._handleError('liveContext', error));
-        this.watchers.push(liveContextWatcher);
+            // Watch ~/.claude/todos/ directory
+            const todosWatcherOptions = {
+                ...watcherOptions,
+                depth: 0 // Only watch immediate children
+            };
+            const todosWatcher = chokidar.watch(this.todosDir, todosWatcherOptions);
+            todosWatcher.on('add', (filepath) => this._handleTodoChange(filepath));
+            todosWatcher.on('change', (filepath) => this._handleTodoChange(filepath));
+            todosWatcher.on('unlink', (filepath) => this._handleTodoRemove(filepath));
+            todosWatcher.on('error', (error) => this._handleError('todos', error));
+            this.watchers.push(todosWatcher);
+
+            // Watch ~/.claude/cache/context-live.json for real-time context data
+            const liveContextWatcherOptions = {
+                ...watcherOptions,
+                awaitWriteFinish: {
+                    stabilityThreshold: 100,  // Faster updates for live data
+                    pollInterval: 50
+                }
+            };
+            const liveContextWatcher = chokidar.watch(this.liveContextPath, liveContextWatcherOptions);
+            liveContextWatcher.on('add', (filepath) => this._handleLiveContextChange(filepath));
+            liveContextWatcher.on('change', (filepath) => this._handleLiveContextChange(filepath));
+            liveContextWatcher.on('error', (error) => this._handleError('liveContext', error));
+            this.watchers.push(liveContextWatcher);
+
+            // Watch subagent directories: ~/.claude/projects/*/subagents/ and ~/.claude/projects/*/*/subagents/
+            const subagentGlobPatterns = [
+                path.join(this.projectsDir, '*', 'subagents', 'agent-*.jsonl'),
+                path.join(this.projectsDir, '*', '*', 'subagents', 'agent-*.jsonl')
+            ];
+            const subagentWatcher = chokidar.watch(subagentGlobPatterns, watcherOptions);
+            subagentWatcher.on('add', (filepath) => this._handleSubagentChange(filepath));
+            subagentWatcher.on('change', (filepath) => this._handleSubagentChange(filepath));
+            subagentWatcher.on('unlink', (filepath) => this._handleSubagentChange(filepath));
+            subagentWatcher.on('error', (error) => this._handleError('subagents', error));
+            this.watchers.push(subagentWatcher);
+
+            // Watch ~/.claude/tasks/ directory for main session tasks
+            const tasksGlobPattern = path.join(this.tasksDir, '*', '*.json');
+            const tasksWatcher = chokidar.watch(tasksGlobPattern, watcherOptions);
+            tasksWatcher.on('add', (filepath) => this._handleTaskChange(filepath));
+            tasksWatcher.on('change', (filepath) => this._handleTaskChange(filepath));
+            tasksWatcher.on('unlink', (filepath) => this._handleTaskRemove(filepath));
+            tasksWatcher.on('error', (error) => this._handleError('tasks', error));
+            this.watchers.push(tasksWatcher);
+        } else {
+            console.warn('[ClaudeState] Chokidar unavailable, using polling only');
+        }
 
         // Polling fallback for live context (chokidar may miss external writes on Windows)
         this._pollInterval = setInterval(() => this._pollLiveContext(), 2000);
-
-        // Watch subagent directories: ~/.claude/projects/*/subagents/ and ~/.claude/projects/*/*/subagents/
-        const subagentGlobPatterns = [
-            path.join(this.projectsDir, '*', 'subagents', 'agent-*.jsonl'),
-            path.join(this.projectsDir, '*', '*', 'subagents', 'agent-*.jsonl')
-        ];
-        const subagentWatcher = chokidar.watch(subagentGlobPatterns, watcherOptions);
-        subagentWatcher.on('add', (filepath) => this._handleSubagentChange(filepath));
-        subagentWatcher.on('change', (filepath) => this._handleSubagentChange(filepath));
-        subagentWatcher.on('unlink', (filepath) => this._handleSubagentChange(filepath));
-        subagentWatcher.on('error', (error) => this._handleError('subagents', error));
-        this.watchers.push(subagentWatcher);
 
         // Initial scan of subagents
         this._scanAllAgents();
 
         // Polling fallback for subagents (chokidar glob watching unreliable on Windows/OneDrive)
         this._subagentPollInterval = setInterval(() => this._pollSubagents(), 5000);
-
-        // Watch ~/.claude/tasks/ directory for main session tasks
-        const tasksGlobPattern = path.join(this.tasksDir, '*', '*.json');
-        const tasksWatcher = chokidar.watch(tasksGlobPattern, watcherOptions);
-        tasksWatcher.on('add', (filepath) => this._handleTaskChange(filepath));
-        tasksWatcher.on('change', (filepath) => this._handleTaskChange(filepath));
-        tasksWatcher.on('unlink', (filepath) => this._handleTaskRemove(filepath));
-        tasksWatcher.on('error', (error) => this._handleError('tasks', error));
-        this.watchers.push(tasksWatcher);
 
         // Initial scan of tasks
         this._scanAllTasks();
@@ -123,18 +153,18 @@ class ClaudeStateManager {
 
     /**
      * Poll live context file for changes (fallback for unreliable chokidar)
+     * Uses content comparison since fs.statSync is not available via preload bridge
      */
     _pollLiveContext() {
         try {
             if (!fs.existsSync(this.liveContextPath)) {
                 return;
             }
-            const stats = fs.statSync(this.liveContextPath);
-            const mtime = stats.mtimeMs;
+            const content = fs.readFileSync(this.liveContextPath, 'utf-8');
 
-            // Only process if file was modified since last poll
-            if (mtime > this._lastLiveContextMtime) {
-                this._lastLiveContextMtime = mtime;
+            // Only process if content has changed since last poll
+            if (content !== this._lastLiveContextContent) {
+                this._lastLiveContextContent = content;
                 this._handleLiveContextChange(this.liveContextPath);
             }
         } catch (error) {
@@ -189,14 +219,13 @@ class ClaudeStateManager {
             }
             const sessions = fs.readdirSync(this.tasksDir);
             for (const sessionId of sessions) {
-                const sessionPath = path.join(this.tasksDir, sessionId);
                 try {
-                    const stat = fs.statSync(sessionPath);
-                    if (stat.isDirectory()) {
-                        this._scanSessionTasks(sessionId);
-                    }
+                    // Test if entry is a directory by attempting readdirSync
+                    const sessionPath = path.join(this.tasksDir, sessionId);
+                    fs.readdirSync(sessionPath);
+                    this._scanSessionTasks(sessionId);
                 } catch (e) {
-                    // Skip invalid entries
+                    // Skip non-directory entries or unreadable directories
                 }
             }
         } catch (error) {
@@ -372,8 +401,8 @@ class ClaudeStateManager {
             for (const project of projects) {
                 const projectPath = path.join(this.projectsDir, project);
                 try {
-                    const projectStat = fs.statSync(projectPath);
-                    if (!projectStat.isDirectory()) continue;
+                    // Test if entry is a directory by attempting readdirSync
+                    const projectContents = fs.readdirSync(projectPath);
 
                     // Check for direct subagents/ directory
                     const directSubagents = path.join(projectPath, 'subagents');
@@ -382,12 +411,11 @@ class ClaudeStateManager {
                     }
 
                     // Check for session-scoped subagents: project/session-id/subagents/
-                    const subdirs = fs.readdirSync(projectPath);
-                    for (const subdir of subdirs) {
+                    for (const subdir of projectContents) {
                         const subdirPath = path.join(projectPath, subdir);
                         try {
-                            const subdirStat = fs.statSync(subdirPath);
-                            if (!subdirStat.isDirectory()) continue;
+                            // Test if entry is a directory by attempting readdirSync
+                            fs.readdirSync(subdirPath);
 
                             const sessionSubagents = path.join(subdirPath, 'subagents');
                             if (fs.existsSync(sessionSubagents)) {
@@ -395,11 +423,11 @@ class ClaudeStateManager {
                                 this._scanSubagentsDir(sessionSubagents, agents, oneDayAgo, subdir);
                             }
                         } catch (e) {
-                            console.warn("[ClaudeState] Error scanning subdir:", subdirPath, e.message);
+                            // Skip non-directory entries
                         }
                     }
                 } catch (e) {
-                    console.warn("[ClaudeState] Error scanning project:", project, e.message);
+                    // Skip non-directory entries or unreadable projects
                 }
             }
 
@@ -427,9 +455,11 @@ class ClaudeStateManager {
 
     /**
      * Scan a single subagents directory and add agents to array
+     * Note: fs.statSync unavailable via preload bridge, so mtime-based filtering
+     * is skipped. All readable agent files are included.
      * @param {string} subagentsDir - Path to subagents directory
      * @param {Array} agents - Array to add agents to
-     * @param {number} cutoffTime - Only include agents modified after this time
+     * @param {number} cutoffTime - Only include agents modified after this time (best-effort without statSync)
      * @param {string|null} sessionId - Parent session ID if known
      */
     _scanSubagentsDir(subagentsDir, agents, cutoffTime, sessionId) {
@@ -440,12 +470,6 @@ class ClaudeStateManager {
 
                 const filepath = path.join(subagentsDir, file);
                 try {
-                    const stat = fs.statSync(filepath);
-                    const mtime = stat.mtimeMs;
-
-                    // Filter to agents modified in last 24 hours
-                    if (mtime < cutoffTime) continue;
-
                     // Extract agent ID from filename: agent-{id}.jsonl
                     const agentId = file.replace('agent-', '').replace('.jsonl', '');
 
@@ -453,14 +477,20 @@ class ClaudeStateManager {
                     let task = 'Unknown task';
                     let slug = null;
                     let agentSessionId = sessionId;
+                    let mtime = Date.now(); // Default to now since fs.statSync is unavailable
 
                     try {
                         const content = fs.readFileSync(filepath, 'utf-8');
-                        const firstLine = content.split('\n')[0];
+                        const lines = content.split('\n');
+                        const firstLine = lines[0];
                         if (firstLine) {
                             const data = JSON.parse(firstLine);
                             slug = data.slug || null;
                             agentSessionId = data.sessionId || sessionId;
+                            // Use timestamp from data if available for mtime approximation
+                            if (data.timestamp) {
+                                mtime = new Date(data.timestamp).getTime();
+                            }
 
                             if (data.message && data.message.content) {
                                 const msgContent = data.message.content;
@@ -471,9 +501,24 @@ class ClaudeStateManager {
                                 }
                             }
                         }
+                        // Try last line for a more recent timestamp
+                        const lastLine = lines.filter(l => l.trim()).pop();
+                        if (lastLine && lastLine !== firstLine) {
+                            try {
+                                const lastData = JSON.parse(lastLine);
+                                if (lastData.timestamp) {
+                                    mtime = new Date(lastData.timestamp).getTime();
+                                }
+                            } catch (e) {
+                                // Ignore parse errors on last line
+                            }
+                        }
                     } catch (e) {
                         console.warn("[ClaudeState] Error parsing agent file:", filepath, e.message);
                     }
+
+                    // Best-effort time filter using data timestamps
+                    if (mtime < cutoffTime) continue;
 
                     const status = this._getAgentStatus(agentSessionId, agentId, mtime);
 

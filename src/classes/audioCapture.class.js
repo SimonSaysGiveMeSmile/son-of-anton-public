@@ -195,4 +195,5 @@ class AudioCapture {
   }
 }
 
-module.exports = { AudioCapture };
+if (typeof window !== 'undefined') window.AudioCapture = AudioCapture;
+if (typeof module !== 'undefined') module.exports = { AudioCapture };
