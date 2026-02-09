@@ -10,6 +10,7 @@
 
     <!-- Load dependency css -->
     <link rel="stylesheet" href="node_modules/augmented-ui/augmented.css" />
+    <link rel="stylesheet" href="node_modules/xterm/css/xterm.css" />
     <!-- Load main css -->
     <link rel="stylesheet" href="assets/css/main.css" />
     <link rel="stylesheet" href="assets/css/modal.css" />
@@ -42,6 +43,17 @@
 
     <!-- Load dependency js -->
     <script src="node_modules/pdfjs-dist/build/pdf.js"></script>
+    <!-- Browser-native npm packages -->
+    <script src="node_modules/howler/dist/howler.min.js"></script>
+    <script src="node_modules/smoothie/smoothie.js"></script>
+    <!-- Terminal dependencies -->
+    <script src="node_modules/xterm/lib/xterm.js"></script>
+    <script src="node_modules/xterm-addon-attach/lib/xterm-addon-attach.js"></script>
+    <script src="node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+    <script src="node_modules/xterm-addon-webgl/lib/xterm-addon-webgl.js"></script>
+    <script src="node_modules/xterm-addon-ligatures/lib/xterm-addon-ligatures.js"></script>
+    <!-- Vendor scripts -->
+    <script src="assets/vendor/encom-globe.js"></script>
     <!-- Load main modules classes -->
     <script src="classes/modal.class.js"></script>
     <script src="classes/terminal.class.js"></script>
@@ -66,6 +78,16 @@
     <script src="classes/agentList.class.js"></script>
     <script src="classes/context.class.js"></script>
     <script src="classes/todoWidget.class.js"></script>
+    <!-- Lazy-loaded classes (moved from require to script tags) -->
+    <script src="classes/widgetLoader.class.js"></script>
+    <script src="classes/audioFeedback.class.js"></script>
+    <script src="classes/audioCapture.class.js"></script>
+    <script src="classes/voiceController.class.js"></script>
+    <script src="classes/voiceToggleWidget.class.js"></script>
+    <script src="classes/waveformVisualizer.class.js"></script>
+    <script src="classes/interimTranscription.class.js"></script>
+    <!-- Performance profiler -->
+    <script src="performance/startupProfiler.js"></script>
 </head>
 
 <body class="solidBackground">

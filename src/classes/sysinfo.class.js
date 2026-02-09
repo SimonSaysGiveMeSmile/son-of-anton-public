@@ -4,7 +4,7 @@ class Sysinfo {
 
         // See #255
         let os;
-        switch (require("os").platform()) {
+        switch (window.nodeAPI.os.platform()) {
             case "darwin":
                 os = "macOS";
                 break;
@@ -12,7 +12,7 @@ class Sysinfo {
                 os = "win";
                 break;
             default:
-                os = require("os").platform();
+                os = window.nodeAPI.os.platform();
         }
 
         // Create DOM
@@ -99,7 +99,7 @@ class Sysinfo {
     }
     updateUptime() {
         let uptime = {
-            raw: Math.floor(require("os").uptime()),
+            raw: Math.floor(window.nodeAPI.os.uptime()),
             days: 0,
             hours: 0,
             minutes: 0
@@ -134,6 +134,5 @@ class Sysinfo {
     }
 }
 
-module.exports = {
-    Sysinfo
-};
+if (typeof window !== 'undefined') window.Sysinfo = Sysinfo;
+if (typeof module !== 'undefined') module.exports = { Sysinfo };

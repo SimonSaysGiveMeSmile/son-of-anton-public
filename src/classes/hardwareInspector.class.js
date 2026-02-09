@@ -46,6 +46,5 @@ class HardwareInspector {
     }
 }
 
-module.exports = {
-    HardwareInspector
-};
+if (typeof window !== 'undefined') window.HardwareInspector = HardwareInspector;
+if (typeof module !== 'undefined') module.exports = { HardwareInspector };

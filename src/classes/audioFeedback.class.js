@@ -8,8 +8,9 @@
  * - Distinct failure sound on transcription failure
  */
 
-const path = require('path');
-const { Howl, Howler } = require('howler');
+const path = window.nodeAPI.path;
+const __dirname = window.nodeAPI.dirname;
+// Howl and Howler are globals from <script> tag
 
 class AudioFeedback {
   constructor() {
@@ -107,4 +108,5 @@ class AudioFeedback {
   }
 }
 
-module.exports = { AudioFeedback };
+if (typeof window !== 'undefined') window.AudioFeedback = AudioFeedback;
+if (typeof module !== 'undefined') module.exports = { AudioFeedback };

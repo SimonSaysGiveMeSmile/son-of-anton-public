@@ -1,41 +1,34 @@
 class UpdateChecker {
     constructor() {
-        let https = require("https");
-        let electron = require("electron");
-        let remote = require("@electron/remote");
-        let current = remote.app.getVersion();
+        let current = window.electronAPI.app.getVersion();
 
         this._failed = false;
-        this._willfail = false;
         this._fail = e => {
             this._failed = true;
-            electron.ipcRenderer.send("log", "note", "UpdateChecker: Could not fetch latest release from GitHub's API.");
-            electron.ipcRenderer.send("log", "debug", `Error: ${e}`);
+            window.electronAPI.ipc.send("log", "note", "UpdateChecker: Could not fetch latest release from GitHub's API.");
+            window.electronAPI.ipc.send("log", "debug", `Error: ${e}`);
         };
 
-        https.get({
-            protocol: "https:",
-            host: "api.github.com",
-            path: "/repos/yifu001/son-of-anton/releases/latest",
+        fetch("https://api.github.com/repos/yifu001/son-of-anton/releases/latest", {
             headers: {
                 "User-Agent": "Son of Anton UpdateChecker"
             }
-        }, res => {
-            switch (res.statusCode) {
-                case 200:
-                    break;
-                case 404:
+        })
+            .then(res => {
+                if (res.status === 404) {
                     this._fail("Got 404 (Not Found) response from server");
-                    break;
-                default:
-                    this._willfail = true;
-            }
-
-            let rawData = "";
-
-            res.on('data', chunk => {
-                rawData += chunk;
-            });
+                    return null;
+                }
+                if (!res.ok) {
+                    return res.text().then(text => {
+                        this._fail(text);
+                        return null;
+                    });
+                }
+                return res.json();
+            })
+            .then(release => {
+                if (this._failed || !release) return;
 
             res.on('end', () => {
                 let d = rawData;
@@ -62,14 +55,15 @@ class UpdateChecker {
                     } catch (e) {
                         this._fail(e);
                     }
+                } catch (e) {
+                    this._fail(e);
                 }
+            })
+            .catch(e => {
+                this._fail(e);
             });
-        }).on('error', e => {
-            this._fail(e);
-        });
     }
 }
 
-module.exports = {
-    UpdateChecker
-};
+if (typeof window !== 'undefined') window.UpdateChecker = UpdateChecker;
+if (typeof module !== 'undefined') module.exports = { UpdateChecker };

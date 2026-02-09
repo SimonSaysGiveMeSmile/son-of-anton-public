@@ -2,14 +2,14 @@ class FilesystemDisplay {
     constructor(opts) {
         if (!opts.parentId) throw "Missing options";
 
-        const fs = require("fs");
-        const path = require("path");
+        const fs = window.nodeAPI.fs;
+        const path = window.nodeAPI.path;
         this.cwd = [];
         this.cwd_path = null;
         this.iconcolor = `rgb(${window.theme.r}, ${window.theme.g}, ${window.theme.b})`;
         this._formatBytes = (a, b) => { if (0 == a) return "0 Bytes"; var c = 1024, d = b || 2, e = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"], f = Math.floor(Math.log(a) / Math.log(c)); return parseFloat((a / Math.pow(c, f)).toFixed(d)) + " " + e[f] };
-        this.fileIconsMatcher = require("./assets/misc/file-icons-match.js");
-        this.icons = require("./assets/icons/file-icons.json");
+        this.fileIconsMatcher = window.nodeAPI.assets.fileIconsMatcher;
+        this.icons = window.nodeAPI.assets.fileIcons;
         this.edexIcons = {
             theme: {
                 width: 24,
@@ -66,24 +66,11 @@ class FilesystemDisplay {
             }
         }, 1000);
 
-        this._asyncFSwrapper = new Proxy(fs, {
-            get: function (fs, prop) {
-                if (prop in fs) {
-                    return function (...args) {
-                        return new Promise((resolve, reject) => {
-                            fs[prop](...args, (err, d) => {
-                                if (typeof err !== "undefined" && err !== null) reject(err);
-                                if (typeof d !== "undefined") resolve(d);
-                                if (typeof d === "undefined" && typeof err === "undefined") resolve();
-                            });
-                        });
-                    }
-                }
-            },
-            set: function () {
-                return false;
-            }
-        });
+        // Direct async fs methods from preload bridge (Proxy pattern incompatible with contextBridge)
+        this._asyncFs = {
+            readdir: (dirPath) => fs.readdir(dirPath),
+            lstat: (filePath) => fs.lstat(filePath),
+        };
 
         this.setFailedState = () => {
             this.failed = true;
@@ -114,6 +101,11 @@ class FilesystemDisplay {
                         this.readFS(cwd);
                         this.watchFS(cwd);
                     }
+
+                    // Dispatch event for session mapping updates
+                    window.dispatchEvent(new CustomEvent('terminal-cwd-changed', {
+                        detail: { terminal: num, cwd: cwd }
+                    }));
                 }
             };
         };
@@ -161,9 +153,9 @@ class FilesystemDisplay {
                 document.querySelector("section#filesystem > h3.title > p:first-of-type").innerText = "FILESYSTEM - TRACKING FAILED, RUNNING DETACHED FROM TTY";
             }
 
-            if (process.platform === "win32" && dir.endsWith(":")) dir = dir + "\\";
+            if (window.nodeAPI.os.platform() === "win32" && dir.endsWith(":")) dir = dir + "\\";
             let tcwd = dir;
-            let content = await this._asyncFSwrapper.readdir(tcwd).catch(err => {
+            let content = await this._asyncFs.readdir(tcwd).catch(err => {
                 console.warn(err);
                 if (this._noTracking === true && this.dirpath) { // #262
                     this.setFailedState();
@@ -183,7 +175,7 @@ class FilesystemDisplay {
                 if (content.length === 0) resolve();
 
                 content.forEach(async (file, i) => {
-                    let fstat = await this._asyncFSwrapper.lstat(path.join(tcwd, file)).catch(e => {
+                    let fstat = await this._asyncFs.lstat(path.join(tcwd, file)).catch(e => {
                         if (!e.message.includes("EPERM") && !e.message.includes("EBUSY")) {
                             reject();
                         }
@@ -198,21 +190,21 @@ class FilesystemDisplay {
                     };
 
                     if (typeof fstat !== "undefined") {
-                        e.lastAccessed = fstat.mtime.getTime();
+                        e.lastAccessed = fstat.mtime;
 
-                        if (fstat.isDirectory()) {
+                        if (fstat.isDirectory) {
                             e.category = "dir";
                             e.type = "dir";
                         }
                         if (e.category === "dir" && tcwd === settingsDir && file === "themes") e.type = "edex-themesDir";
                         if (e.category === "dir" && tcwd === settingsDir && file === "keyboards") e.type = "edex-kblayoutsDir";
 
-                        if (fstat.isSymbolicLink()) {
+                        if (fstat.isSymbolicLink) {
                             e.category = "symlink";
                             e.type = "symlink";
                         }
 
-                        if (fstat.isFile()) {
+                        if (fstat.isFile) {
                             e.category = "file";
                             e.type = "file";
                             e.size = fstat.size;
@@ -326,7 +318,7 @@ class FilesystemDisplay {
                     } else if (e.type === "up") {
                         cmd = `window.term[window.currentTerm].writelr("cd ..")`;
                     } else if (e.type === "disk" || e.type === "rom" || e.type === "usb") {
-                        if (process.platform === "win32") {
+                        if (window.nodeAPI.os.platform() === "win32") {
                             cmd = `window.term[window.currentTerm].writelr("${e.path.replace(/\\/g, '')}")`;
                         } else {
                             cmd = `window.term[window.currentTerm].writelr("cd \\"${e.path.replace(/\\/g, '')}\\"")`;
@@ -520,7 +512,7 @@ class FilesystemDisplay {
         this.renderDiskUsage = async fsBlock => {
             if (document.getElementById("fs_space_bar").getAttribute("onclick") !== "" || fsBlock === null) return;
 
-            let splitter = (process.platform === "win32") ? "\\" : "/";
+            let splitter = (window.nodeAPI.os.platform() === "win32") ? "\\" : "/";
             let displayMount = (fsBlock.mount.length < 18) ? fsBlock.mount : "..." + splitter + fsBlock.mount.split(splitter).pop();
 
             // See #226
@@ -554,7 +546,7 @@ class FilesystemDisplay {
                 name = block.name;
             }
 
-            let mime = require("mime-types");
+            let mime = window.nodeAPI.mimeTypes;
 
             block.path = block.path.replace(/\\/g, "/");
 
@@ -737,6 +729,5 @@ class FilesystemDisplay {
     }
 }
 
-module.exports = {
-    FilesystemDisplay
-};
+if (typeof window !== 'undefined') window.FilesystemDisplay = FilesystemDisplay;
+if (typeof module !== 'undefined') module.exports = { FilesystemDisplay };

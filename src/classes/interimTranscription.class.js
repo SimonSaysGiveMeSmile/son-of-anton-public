@@ -171,4 +171,5 @@ class InterimTranscription {
   }
 }
 
-module.exports = { InterimTranscription };
+if (typeof window !== 'undefined') window.InterimTranscription = InterimTranscription;
+if (typeof module !== 'undefined') module.exports = { InterimTranscription };

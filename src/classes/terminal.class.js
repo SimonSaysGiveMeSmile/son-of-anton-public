@@ -3,12 +3,14 @@ class Terminal {
         if (opts.role === "client") {
             if (!opts.parentId) throw "Missing options";
 
-            this.xTerm = require("xterm").Terminal;
-            const { AttachAddon } = require("xterm-addon-attach");
-            const { FitAddon } = require("xterm-addon-fit");
-            const { LigaturesAddon } = require("xterm-addon-ligatures");
-            const { WebglAddon } = require("xterm-addon-webgl");
-            this.Ipc = require("electron").ipcRenderer;
+            // xterm and addons loaded as UMD <script> tags in ui.html (globals)
+            // UMD bundles export module objects (e.g. { FitAddon: class }), not constructors directly
+            this.xTerm = window.XTerminal;
+            const AttachAddon = window.AttachAddon.AttachAddon;
+            const FitAddon = window.FitAddon.FitAddon;
+            const LigaturesAddon = window.LigaturesAddon.LigaturesAddon;
+            const WebglAddon = window.WebglAddon.WebglAddon;
+            this.Ipc = window.electronAPI.ipc;
 
             this.port = opts.port || 3000;
             this.cwd = "";
@@ -72,26 +74,14 @@ class Terminal {
                 });
             }
 
-            let color = require("color");
             let colorify;
             if (doCustomFilter) {
                 colorify = (base, target) => {
-                    let newColor = color(base);
-                    target = color(target);
-
-                    for (let i = 0; i < window.theme.terminal.colorFilter.length; i++) {
-                        if (window.theme.terminal.colorFilter[i].func === "mix") {
-                            newColor = newColor[window.theme.terminal.colorFilter[i].func](target, ...window.theme.terminal.colorFilter[i].arg);
-                        } else {
-                            newColor = newColor[window.theme.terminal.colorFilter[i].func](...window.theme.terminal.colorFilter[i].arg);
-                        }
-                    }
-
-                    return newColor.hex();
+                    return window.nodeAPI.color.applyChain(base, target, window.theme.terminal.colorFilter);
                 };
             } else {
                 colorify = (base, target) => {
-                    return color(base).grayscale().mix(color(target), 0.3).hex();
+                    return window.nodeAPI.color.grayscaleMix(base, target, 0.3);
                 };
             }
 
@@ -152,7 +142,7 @@ class Terminal {
             this.term.focus();
 
             this.Ipc.send("terminal_channel-" + this.port, "Renderer startup");
-            this.Ipc.on("terminal_channel-" + this.port, (e, ...args) => {
+            this.Ipc.on("terminal_channel-" + this.port, (...args) => {
                 switch (args[0]) {
                     case "New cwd":
                         this.cwd = args[1];
@@ -184,7 +174,16 @@ class Terminal {
                 this.term.loadAddon(attachAddon);
                 this.fit();
             };
-            this.socket.onerror = e => { throw JSON.stringify(e) };
+            this.socket.onerror = e => {
+                console.error("[Terminal] WebSocket error on port " + sockPort + ":", e);
+                if (window.edexErrorsModals) {
+                    new Modal({
+                        type: "warning",
+                        title: "Terminal Connection Error",
+                        message: `WebSocket connection to port ${sockPort} failed. The terminal backend may not be ready yet.`
+                    });
+                }
+            };
             this.socket.onclose = e => {
                 if (this.onclose) {
                     this.onclose(e);
@@ -294,8 +293,9 @@ class Terminal {
                     this.term.clearSelection();
                     this.clipboard.didCopy = true;
                 },
-                paste: () => {
-                    this.write(remote.clipboard.readText());
+                paste: async () => {
+                    const text = await window.electronAPI.clipboard.readText();
+                    this.write(text);
                     this.clipboard.didCopy = false;
                 },
                 didCopy: false
@@ -471,6 +471,7 @@ class Terminal {
 
             this.wss = new this.Websocket({
                 port: this.port,
+                host: '127.0.0.1',
                 clientTracking: true,
                 verifyClient: info => {
                     if (this.wss.clients.length >= 1) {
@@ -540,6 +541,14 @@ class Terminal {
             });
 
             this.close = () => {
+                if (this._tick) {
+                    clearInterval(this._tick);
+                    this._tick = null;
+                }
+                if (this.wss) {
+                    this.wss.close();
+                    this.wss = null;
+                }
                 this.tty.kill();
                 this._closed = true;
             };
@@ -549,6 +558,5 @@ class Terminal {
     }
 }
 
-module.exports = {
-    Terminal
-};
+if (typeof window !== 'undefined') window.Terminal = Terminal;
+if (typeof module !== 'undefined') module.exports = { Terminal };

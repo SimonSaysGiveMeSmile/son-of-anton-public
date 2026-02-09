@@ -29,11 +29,9 @@ class Netstat {
         this.iface = null;
         this.failedAttempts = {};
         this.runsBeforeGeoIPUpdate = 0;
-
-        this._httpsAgent = new require("https").Agent({
-            keepAlive: false,
-            maxSockets: 10
-        });
+        this._geoIPAvailable = false;
+        this._pingAvailable = false;
+        this._fetchController = null; // AbortController for in-flight fetch
 
         // Init updaters
         this.updateInfo();
@@ -45,16 +43,35 @@ class Netstat {
         this.geoLookup = {
             get: () => null
         };
-        let geolite2 = require("geolite2-redist");
-        let maxmind = require("maxmind");
-        geolite2.downloadDbs(require("path").join(require("@electron/remote").app.getPath("userData"), "geoIPcache")).then(() => {
-            geolite2.open('GeoLite2-City', path => {
-                return maxmind.open(path);
-            }).catch(e => { throw e }).then(lookup => {
-                this.geoLookup = lookup;
+        try {
+            let geolite2 = require("geolite2-redist");
+            let maxmind = require("maxmind");
+            window.electronAPI.app.getPath("userData").then(userDataPath => {
+                const cachePath = window.nodeAPI.path.join(userDataPath, "geoIPcache");
+                geolite2.downloadDbs(cachePath).then(() => {
+                    geolite2.open('GeoLite2-City', path => {
+                        return maxmind.open(path);
+                    }).then(lookup => {
+                        this.geoLookup = lookup;
+                        this._geoIPAvailable = true;
+                        this.lastconn.finished = true;
+                    }).catch(e => {
+                        console.error("[Netstat] GeoIP database open failed:", e.message || e);
+                        this.lastconn.finished = true;
+                    });
+                }).catch(e => {
+                    console.error("[Netstat] GeoIP database download failed:", e.message || e);
+                    this.lastconn.finished = true;
+                });
+            }).catch(e => {
+                console.error("[Netstat] Failed to get userData path:", e.message || e);
                 this.lastconn.finished = true;
             });
-        });
+        } catch (e) {
+            console.warn('[Netstat] GeoIP disabled: contextIsolation prevents native module loading');
+            this._geoIPAvailable = false;
+            this.lastconn.finished = true;
+        }
     }
     updateInfo() {
         window.si.networkInterfaces().then(async data => {
@@ -87,10 +104,10 @@ class Netstat {
                 }
             } else {
                 // Find the first external, IPv4 connected networkInterface that has a MAC address set
-                const isWindows = require("os").type() === "Windows_NT";
+                const isWindows = window.nodeAPI.os.type() === "Windows_NT";
                 if (window.settings.debug) {
                     console.log("[Netstat] === Interface Detection Start ===");
-                    console.log("[Netstat] OS:", require("os").type());
+                    console.log("[Netstat] OS:", window.nodeAPI.os.type());
                     console.log("[Netstat] Total interfaces:", data.length);
                     data.forEach((iface, idx) => {
                         console.log(`[Netstat] [${idx}] ${iface.iface}: operstate=${iface.operstate}, internal=${iface.internal}, ip4=${iface.ip4}, mac=${iface.mac ? iface.mac.substring(0,8)+'...' : 'none'}`);
@@ -169,12 +186,19 @@ class Netstat {
             } else {
                 if (this.runsBeforeGeoIPUpdate === 0 && this.lastconn.finished) {
                     const externalIpService = window.settings.externalIpService || { host: "myexternalip.com", port: 443, path: "/json" };
-                    this.lastconn = require("https").get({ host: externalIpService.host, port: externalIpService.port, path: externalIpService.path, localAddress: net.ip4, agent: this._httpsAgent }, res => {
-                        let rawData = "";
-                        res.on("data", chunk => {
-                            rawData += chunk;
-                        });
-                        res.on("end", () => {
+                    this.lastconn = { finished: false };
+
+                    // Abort any previous in-flight request
+                    if (this._fetchController) {
+                        this._fetchController.abort();
+                    }
+                    this._fetchController = new AbortController();
+
+                    fetch(`https://${externalIpService.host}${externalIpService.path}`, {
+                        signal: this._fetchController.signal
+                    })
+                        .then(res => res.text())
+                        .then(rawData => {
                             try {
                                 let data = JSON.parse(rawData);
                                 if (window.settings.debug) console.log("[Netstat] External IP response:", rawData);
@@ -199,15 +223,18 @@ class Netstat {
                                 if (this.failedAttempts[e] > 2) return false;
                                 console.warn(e);
                                 console.info(rawData.toString());
-                                let electron = require("electron");
-                                electron.ipcRenderer.send("log", "note", "NetStat: Error parsing data from external IP service");
-                                electron.ipcRenderer.send("log", "debug", `Error: ${e}`);
+                                window.electronAPI.ipc.send("log", "note", "NetStat: Error parsing data from external IP service");
+                                window.electronAPI.ipc.send("log", "debug", `Error: ${e}`);
                             }
+                        })
+                        .catch(e => {
+                            if (e.name === 'AbortError') return; // Ignore aborted requests
+                            if (window.settings.debug) console.log("[Netstat] HTTP error fetching external IP:", e.message);
+                        })
+                        .finally(() => {
+                            this.lastconn.finished = true;
+                            this._fetchController = null;
                         });
-                    }).on("error", e => {
-                        // HTTP request failed - log for debugging
-                        if (window.settings.debug) console.log("[Netstat] HTTP error fetching external IP:", e.message);
-                    });
                 } else if (this.runsBeforeGeoIPUpdate !== 0) {
                     this.runsBeforeGeoIPUpdate = this.runsBeforeGeoIPUpdate - 1;
                 }
@@ -238,32 +265,36 @@ class Netstat {
     }
     ping(target, port, local) {
         return new Promise((resolve, reject) => {
-            let s = new require("net").Socket();
-            let start = process.hrtime();
+            try {
+                let s = new (require("net")).Socket();
+                let start = performance.now();
 
-            s.connect({
-                port,
-                host: target,
-                localAddress: local,
-                family: 4
-            }, () => {
-                let time_arr = process.hrtime(start);
-                let time = (time_arr[0] * 1e9 + time_arr[1]) / 1e6;
-                resolve(time);
-                s.destroy();
-            });
-            s.on('error', e => {
-                s.destroy();
-                reject(e);
-            });
-            s.setTimeout(1900, function () {
-                s.destroy();
-                reject(new Error("Socket timeout"));
-            });
+                s.connect({
+                    port,
+                    host: target,
+                    localAddress: local,
+                    family: 4
+                }, () => {
+                    let time = performance.now() - start;
+                    resolve(time);
+                    s.destroy();
+                });
+                s.on('error', e => {
+                    s.destroy();
+                    reject(e);
+                });
+                s.setTimeout(1900, function () {
+                    s.destroy();
+                    reject(new Error("Socket timeout"));
+                });
+            } catch (e) {
+                console.warn('[Netstat] TCP ping disabled: contextIsolation prevents net module');
+                this._pingAvailable = false;
+                reject(new Error("TCP ping unavailable: net module not accessible"));
+            }
         });
     }
 }
 
-module.exports = {
-    Netstat
-};
+if (typeof window !== 'undefined') window.Netstat = Netstat;
+if (typeof module !== 'undefined') module.exports = { Netstat };

@@ -8,7 +8,8 @@
  * - Wake word ignored during recording (re-triggering disabled)
  */
 
-const { AudioCapture } = require('./audioCapture.class');
+// AudioCapture is loaded via <script> tag in ui.html
+const AudioCapture = window.AudioCapture;
 
 // Voice states
 const VoiceState = {
@@ -45,6 +46,7 @@ class VoiceController {
 
     // Bind space key handler
     this._boundKeyHandler = this._handleKeyDown.bind(this);
+    this._wakeWordListener = null; // Stored for cleanup
   }
 
   /**
@@ -77,8 +79,8 @@ class VoiceController {
         return false;
       }
 
-      // Setup wake word detection listener
-      window.ipc.on('voice:wake-word-detected', () => {
+      // Setup wake word detection listener (store ref for cleanup)
+      this._wakeWordListener = window.ipc.on('voice:wake-word-detected', () => {
         this._onWakeWordDetected();
       });
 
@@ -427,6 +429,10 @@ class VoiceController {
     this._clearTimers();
     this._stopAudioLevelPolling();
     document.removeEventListener('keydown', this._boundKeyHandler);
+    if (this._wakeWordListener) {
+      window.ipc.removeListener('voice:wake-word-detected', this._wakeWordListener);
+      this._wakeWordListener = null;
+    }
     this.audioCapture.release();
     window.ipc.send('voice:release');
     this._setState(VoiceState.DISABLED);
@@ -436,4 +442,8 @@ class VoiceController {
   }
 }
 
-module.exports = { VoiceController, VoiceState };
+if (typeof window !== 'undefined') {
+    window.VoiceController = VoiceController;
+    window.VoiceState = VoiceState;
+}
+if (typeof module !== 'undefined') module.exports = { VoiceController, VoiceState };
